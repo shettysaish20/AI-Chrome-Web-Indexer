@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Web Page Indexer</title>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header>
+      <h1>Web Page Indexer</h1>
+      <div class="status-indicator">
+        <span id="api-status" class="status-dot offline" title="API Connection Status"></span>
+        <span id="status-text">Checking API...</span>
+      </div>
+    </header>
+
+    <div class="tab-container">
+      <div class="tabs">
+        <button id="search-tab" class="tab-button active">Search</button>
+        <button id="chat-tab" class="tab-button">Chat</button>
+      </div>
+    </div>
+
+    <!-- Search Tab Content -->
+    <div id="search-tab-content" class="tab-content active">
+      <div class="search-container">
+        <div class="search-box">
+          <input type="text" id="search-input" placeholder="Search your browsing history..." autofocus>
+          <button id="search-button">Search</button>
+        </div>
+        <div class="search-options">
+          <label title="Open the page and highlight matching content">
+            <input type="checkbox" id="auto-highlight" checked> Auto-highlight results
+          </label>
+        </div>
+      </div>
+
+      <div class="results-container">
+        <div id="results-list"></div>
+        <div id="no-results" class="hidden">No results found</div>
+        <div id="loading" class="hidden">Searching...</div>
+        <div id="error-message" class="hidden"></div>
+      </div>
+    </div>
+
+    <!-- Chat Tab Content -->
+    <div id="chat-tab-content" class="tab-content">
+      <div class="chat-container">
+        <div class="chat-messages" id="chat-messages">
+          <div class="system-message">
+            Hello! Ask me anything about your browsing history. I'll provide answers with sources.
+          </div>
+        </div>
+        <div class="chat-input-container">
+          <textarea id="chat-input" placeholder="Ask a question about the pages you've visited..." rows="2"></textarea>
+          <button id="chat-send-button" title="Send message">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M15.964.686a.5.5 0 0 0-.65-.65L.767 5.855H.766l-.452.18a.5.5 0 0 0-.082.887l.41.26.001.002 4.995 3.178 3.178 4.995.002.002.26.41a.5.5 0 0 0 .886-.083l6-15Zm-1.833 1.89L6.637 10.07l-.215-.338a.5.5 0 0 0-.154-.154l-.338-.215 7.494-7.494Z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="stats-container">
+      <div id="stats">
+        <span id="indexed-pages">0</span> pages indexed
+        (<span id="indexed-chunks">0</span> chunks)
+      </div>
+      <div class="action-buttons">
+        <button id="refresh-stats" title="Refresh Statistics">↻</button>
+      </div>
+    </div>
+
+    <footer>
+      <p>For the page indexing to work, make sure the Flask backend is running.</p>
+      <p><small>Built with Nomic embeddings and FAISS</small></p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
