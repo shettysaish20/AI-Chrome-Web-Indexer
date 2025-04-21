@@ -175,8 +175,9 @@ class MemoryManager:
             # Get embedding for the query
             query_embedding = self.get_embedding(query)
             
-            # Search the index
-            D, I = self.index.search(np.array([query_embedding]), top_k)
+            # Search the index - retrieve more candidates for reranking
+            retrieve_k = min(top_k * 3, 15)  # Retrieve more candidates than needed for reranking
+            D, I = self.index.search(np.array([query_embedding]), retrieve_k)
             
             results = []
             for i, (idx, distance) in enumerate(zip(I[0], D[0])):
@@ -187,21 +188,130 @@ class MemoryManager:
                 chunk_id = list(self.metadata.keys())[idx]
                 chunk_data = self.metadata[chunk_id]
                 
+                # Advanced scoring - combine vector distance with BM25-style keyword matching
+                # Lower distance means higher relevance
+                vector_score = float(np.exp(-distance / 5))  # Steeper curve for better differentiation
+                
+                # Add keyword matching component
+                keyword_score = self._calculate_keyword_score(query, chunk_data["content"])
+                
+                # Combined score with vector search having more weight (70/30 split)
+                final_score = (0.7 * vector_score) + (0.3 * keyword_score)
+                
+                # Prepare snippet
+                snippet = self._generate_snippet(query, chunk_data["content"])
+                
                 result = {
                     "url": chunk_data["url"],
                     "title": chunk_data["title"],
                     "content": chunk_data["content"],
-                    "score": float(1.0 / (1.0 + distance)),  # Convert distance to similarity score
+                    "snippet": snippet,
+                    "score": final_score,
                     "chunk_id": chunk_id
                 }
                 results.append(result)
             
-            logger.info(f"Search for '{query}' returned {len(results)} results")
+            # Sort results by score in descending order
+            results.sort(key=lambda x: x["score"], reverse=True)
+            
+            # Return top_k results after reranking
+            results = results[:top_k]
+            
+            logger.info(f"Search for '{query}' returned {len(results)} results with scores: {[round(r['score'], 3) for r in results]}")
             return results
             
         except Exception as e:
             logger.error(f"Error searching for '{query}': {str(e)}", exc_info=True)
             return []
+    
+    def _calculate_keyword_score(self, query: str, content: str) -> float:
+        """
+        Calculate keyword matching score for improved relevance
+        
+        Args:
+            query: Search query
+            content: Document content
+            
+        Returns:
+            Keyword matching score between 0 and 1
+        """
+        # Simple but effective keyword matching
+        query_terms = [term.lower() for term in query.split() if len(term) > 2]
+        if not query_terms:
+            return 0.0
+        
+        content_lower = content.lower()
+        
+        # Count exact matches
+        matches = sum(1 for term in query_terms if term in content_lower)
+        
+        # Count term frequencies for matched terms
+        term_freq = sum(content_lower.count(term) for term in query_terms if term in content_lower)
+        
+        # Normalize by query length and apply a sigmoid to keep between 0-1
+        base_score = matches / len(query_terms) if query_terms else 0
+        freq_bonus = min(0.5, term_freq / 50)  # Cap frequency bonus at 0.5
+        
+        return base_score + freq_bonus * base_score
+    
+    def _generate_snippet(self, query: str, content: str, max_length: int = 200) -> str:
+        """
+        Generate a snippet from content based on query match
+        
+        Args:
+            query: Search query
+            content: Document content
+            max_length: Maximum length of snippet
+            
+        Returns:
+            Snippet text
+        """
+        # Find best matching section of content
+        query_terms = [term.lower() for term in query.split() if len(term) > 2]
+        if not query_terms or not content:
+            return content[:max_length] + "..." if len(content) > max_length else content
+        
+        content_lower = content.lower()
+        
+        # Find positions of all query terms in content
+        positions = []
+        for term in query_terms:
+            pos = content_lower.find(term)
+            if pos >= 0:
+                positions.append(pos)
+        
+        if not positions:
+            return content[:max_length] + "..." if len(content) > max_length else content
+        
+        # Find center of matching terms
+        center = sum(positions) // len(positions)
+        
+        # Extract snippet around center
+        start = max(0, center - max_length // 2)
+        end = min(len(content), center + max_length // 2)
+        
+        # Adjust to not cut words
+        if start > 0:
+            # Find first space before start
+            adjust_start = content.rfind(" ", 0, start)
+            if adjust_start > 0:
+                start = adjust_start + 1
+        
+        if end < len(content):
+            # Find first space after end
+            adjust_end = content.find(" ", end)
+            if adjust_end > 0:
+                end = adjust_end
+        
+        snippet = content[start:end]
+        
+        # Add ellipsis if needed
+        if start > 0:
+            snippet = "..." + snippet
+        if end < len(content):
+            snippet = snippet + "..."
+            
+        return snippet
 
     def get_stats(self) -> Dict[str, Any]:
         """

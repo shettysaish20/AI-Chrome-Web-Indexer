@@ -378,17 +378,109 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
   
-  // Open source page
+  // Open source page with improved highlighting
   function openSourcePage(source) {
+    // Store highlight data in session storage to ensure it's available 
+    // even if the popup closes
+    const highlightData = {
+      content: source.content || "",
+      snippet: source.snippet || "",
+      url: source.url
+    };
+    
+    chrome.storage.session.set({ 'highlightData': highlightData });
+    
+    // Open the page in a new tab
     chrome.tabs.create({ url: source.url }, (tab) => {
-      // Give the page time to load before highlighting source content
+      // Give the page more time to load before trying to highlight content
+      const waitTime = 1500; // 1.5 seconds
+      
       setTimeout(() => {
-        chrome.tabs.sendMessage(tab.id, {
-          action: 'highlight',
-          positions: [{ term: source.highlight_text || source.snippet || '' }]
-        });
-      }, 1000);
+        try {
+          // Send the source object directly to the background script
+          // which has better handling for highlight source requests
+          chrome.runtime.sendMessage({
+            action: 'highlightSource',
+            tabId: tab.id,
+            source: {
+              content: source.content || "",
+              snippet: source.snippet || "",
+              url: source.url,
+              title: source.title || ""
+            }
+          });
+        } catch (error) {
+          console.error("Error highlighting source:", error);
+          
+          // Fallback approach - try direct highlighting
+          const terms = extractBetterHighlightTerms(source.snippet || source.content || "");
+          
+          if (terms.length > 0) {
+            chrome.tabs.sendMessage(tab.id, {
+              action: 'highlight',
+              positions: terms.map(term => ({ term }))
+            });
+          }
+        }
+      }, waitTime);
     });
+  }
+  
+  // Extract better highlight terms from source content with improved logic
+  function extractBetterHighlightTerms(content) {
+    if (!content || typeof content !== 'string') return [];
+    
+    // Clean the content - remove excess whitespace
+    content = content.trim().replace(/\s+/g, ' ');
+    if (content.length < 5) return [];
+    
+    const result = [];
+    
+    // Strategy 1: Exact sentences (30-80 chars) - highest quality for highlighting
+    const sentences = content.split(/[.!?]+/).map(s => s.trim())
+      .filter(s => s.length >= 30 && s.length <= 80);
+      
+    if (sentences.length > 0) {
+      // Add top 2 sentences directly
+      result.push(...sentences.slice(0, 2));
+    }
+    
+    // Strategy 2: Distinctive phrases (4-6 consecutive words)
+    if (result.length < 3) {
+      const words = content.trim().split(/\s+/);
+      for (let i = 0; i < words.length - 5 && result.length < 3; i += 5) {
+        const phrase = words.slice(i, i + 5).join(' ');
+        if (phrase.length >= 20 && phrase.length <= 60) {
+          result.push(phrase);
+        }
+      }
+    }
+    
+    // Strategy 3: Fall back to unusual words or combinations
+    if (result.length === 0) {
+      // Look for words that are likely to be distinctive
+      const distinctiveWords = content.split(/\s+/)
+        .filter(word => word.length > 6)
+        .filter(word => {
+          // Words with mixed case or numbers are likely more distinctive
+          return (
+            /[A-Z]/.test(word) && /[a-z]/.test(word) || 
+            /\d/.test(word) ||
+            /[^\w\s]/.test(word)
+          );
+        });
+      
+      if (distinctiveWords.length > 0) {
+        // Take up to 3 distinctive words
+        result.push(...distinctiveWords.slice(0, 3));
+      } else if (content.length > 20) {
+        // Last resort: take a chunk of content
+        result.push(content.substring(0, Math.min(80, content.length)));
+      }
+    }
+    
+    console.log("Extracted highlight terms:", result);
+    return result.slice(0, 5); // Limit to max 5 terms
   }
   
   // Scroll chat to bottom
