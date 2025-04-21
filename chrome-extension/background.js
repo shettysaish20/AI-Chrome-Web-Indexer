@@ -33,6 +33,68 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false; // No response needed
   }
 
+  // Handle highlight source action from popup
+  if (message.action === 'highlightSource') {
+    try {
+      const { tabId, source } = message;
+      
+      if (!tabId || !source || !source.url) {
+        log('Invalid highlight source parameters');
+        sendResponse({ success: false, error: 'Invalid parameters' });
+        return false;
+      }
+      
+      log(`Highlighting source in tab ${tabId}: ${source.url}`);
+      
+      // Extract terms from the source to highlight
+      let positions = [];
+      
+      // Use snippet first if available
+      if (source.snippet && source.snippet.length > 15) {
+        positions.push({ term: source.snippet });
+      }
+      // Also try content if available
+      if (source.content && source.content.length > 15) {
+        const contentTerms = extractHighlightTermsFromContent(source.content);
+        if (contentTerms.length > 0) {
+          positions.push(...contentTerms.map(term => ({ term })));
+        }
+      }
+      
+      // If neither worked, create a fallback approach
+      if (positions.length === 0) {
+        log('No good highlight terms found, using fallback');
+        // Try to use at least something from the source
+        positions.push({ 
+          term: (source.snippet || source.content || '').substring(0, 80) 
+        });
+      }
+      
+      // Send highlight message to the content script
+      chrome.tabs.sendMessage(
+        tabId,
+        {
+          action: 'highlight',
+          positions: positions
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            log(`Error sending highlight message: ${chrome.runtime.lastError.message}`);
+            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          sendResponse(response || { success: false, error: 'No response from content script' });
+        }
+      );
+      
+      return true; // Asynchronous response
+    } catch (error) {
+      log(`Error in highlightSource: ${error.message}`);
+      sendResponse({ success: false, error: error.message });
+      return false;
+    }
+  }
+
   // Index the current page
   if (message.action === 'indexPage') {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -238,3 +300,39 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     });
   }
 });
+
+// Helper function to extract highlight terms from content
+function extractHighlightTermsFromContent(content) {
+  if (!content || typeof content !== 'string') return [];
+  
+  content = content.trim().replace(/\s+/g, ' ');
+  if (content.length < 15) return [];
+  
+  const result = [];
+  
+  // Strategy 1: Look for sentences (30-80 chars) - these work best for highlighting
+  const sentences = content.split(/[.!?]+/).map(s => s.trim())
+    .filter(s => s.length >= 30 && s.length <= 80);
+    
+  if (sentences.length > 0) {
+    // Use top 2 sentences for highlighting
+    result.push(...sentences.slice(0, 2));
+    return result;
+  }
+  
+  // Strategy 2: Look for phrases (consecutive words) 
+  const words = content.trim().split(/\s+/);
+  for (let i = 0; i < words.length - 5 && result.length < 2; i += 5) {
+    const phrase = words.slice(i, i + 5).join(' ');
+    if (phrase.length >= 20 && phrase.length <= 60) {
+      result.push(phrase);
+    }
+  }
+  
+  // Strategy 3: If nothing else worked, take a substring of content
+  if (result.length === 0 && content.length > 20) {
+    result.push(content.substring(0, Math.min(80, content.length)));
+  }
+  
+  return result;
+}

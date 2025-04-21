@@ -380,49 +380,92 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Open source page with improved highlighting
   function openSourcePage(source) {
-    // Store highlight data in session storage to ensure it's available 
-    // even if the popup closes
+    // Ensure source has the necessary properties
+    if (!source || !source.url) {
+      console.error('Invalid source object:', source);
+      return;
+    }
+    
+    // Use enhanced data for highlighting
     const highlightData = {
       content: source.content || "",
       snippet: source.snippet || "",
-      url: source.url
+      url: source.url,
+      // Add a timestamp to ensure this is treated as a fresh request
+      timestamp: Date.now()
     };
     
+    // Store in session storage as a backup mechanism
     chrome.storage.session.set({ 'highlightData': highlightData });
     
     // Open the page in a new tab
     chrome.tabs.create({ url: source.url }, (tab) => {
-      // Give the page more time to load before trying to highlight content
-      const waitTime = 1500; // 1.5 seconds
+      if (!tab || !tab.id) {
+        console.error('Failed to create tab');
+        return;
+      }
       
-      setTimeout(() => {
-        try {
-          // Send the source object directly to the background script
-          // which has better handling for highlight source requests
-          chrome.runtime.sendMessage({
-            action: 'highlightSource',
-            tabId: tab.id,
-            source: {
-              content: source.content || "",
-              snippet: source.snippet || "",
-              url: source.url,
-              title: source.title || ""
+      // Wait for a reasonable amount of time for the page to load
+      const waitTime = 2000; // 2 seconds
+      
+      // Set up a retry mechanism
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      function attemptHighlighting() {
+        console.log(`Attempting to highlight in tab ${tab.id}, attempt ${retryCount + 1}`);
+        
+        // Send to background script for highlighting
+        chrome.runtime.sendMessage({
+          action: 'highlightSource',
+          tabId: tab.id,
+          source: {
+            content: source.content || "",
+            snippet: source.snippet || "",
+            url: source.url,
+            title: source.title || ""
+          }
+        }, (response) => {
+          // Check if highlighting succeeded
+          if (!response || response.error || !response.success) {
+            console.warn('Highlighting response indicates failure:', response);
+            retryCount++;
+            
+            // If we still have retries left and got an error about content script not being ready,
+            // try again after a short delay
+            if (retryCount < maxRetries) {
+              console.log(`Scheduling retry ${retryCount + 1} in ${1000 * retryCount}ms...`);
+              setTimeout(attemptHighlighting, 1000 * retryCount);
+            } else {
+              console.error('Maximum highlight retries exceeded. Falling back to direct method.');
+              // Final fallback - use direct highlighting method
+              tryDirectHighlighting();
+            }
+          }
+        });
+      }
+      
+      // Fallback method that sends highlight message directly to the content script
+      function tryDirectHighlighting() {
+        console.log('Attempting direct highlighting...');
+        const terms = extractBetterHighlightTerms(source.snippet || source.content || "");
+        
+        if (terms.length > 0) {
+          chrome.tabs.sendMessage(tab.id, {
+            action: 'highlight',
+            positions: terms.map(term => ({ term }))
+          }, (response) => {
+            if (chrome.runtime.lastError) {
+              console.error('Direct highlighting failed:', chrome.runtime.lastError);
+            } else {
+              console.log('Direct highlighting response:', response);
             }
           });
-        } catch (error) {
-          console.error("Error highlighting source:", error);
-          
-          // Fallback approach - try direct highlighting
-          const terms = extractBetterHighlightTerms(source.snippet || source.content || "");
-          
-          if (terms.length > 0) {
-            chrome.tabs.sendMessage(tab.id, {
-              action: 'highlight',
-              positions: terms.map(term => ({ term }))
-            });
-          }
         }
-      }, waitTime);
+      }
+      
+      // Start the highlight process after waiting for page to load
+      setTimeout(attemptHighlighting, waitTime);
     });
   }
   
